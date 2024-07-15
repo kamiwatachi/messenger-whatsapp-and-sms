@@ -1,0 +1,115 @@
+import sqlite3
+import requests
+import time
+import json
+import logging
+
+# Configuration for WhatsApp Business API
+whatsapp_api_url = 'https://your_whatsapp_business_api_url/v1'  # 🟣 Replace with your WhatsApp Business API URL
+whatsapp_api_username = 'your_api_username'  # 🟣 Replace with your API username
+whatsapp_api_password = 'your_api_password'  # 🟣 Replace with your API password
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Function to check if a number is registered on WhatsApp
+def is_whatsapp_number(phone_number):
+    url = f"{whatsapp_api_url}/contacts"
+    headers = {
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'blocking': 'wait',
+        'contacts': [phone_number],
+        'force_check': True
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, auth=(whatsapp_api_username, whatsapp_api_password), data=json.dumps(payload))
+        response.raise_for_status()
+        contacts = response.json().get('contacts', [])
+        return contacts and contacts[0].get('status') == 'valid'
+    except requests.RequestException as e:
+        logging.error(f"Error checking WhatsApp number: {e}")
+        return False
+
+# Function to send WhatsApp message using the WhatsApp Business API
+def send_whatsapp_message(to_number, message):
+    url = f"{whatsapp_api_url}/messages"
+    headers = {
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'to': to_number,
+        'type': 'text',
+        'text': {
+            'body': message
+        }
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, auth=(whatsapp_api_username, whatsapp_api_password), data=json.dumps(payload))
+        response.raise_for_status()
+        logging.info(f"WhatsApp message sent to {to_number}")
+    except requests.RequestException as e:
+        logging.error(f"Error sending WhatsApp message to {to_number}: {e}")
+
+# Function to send SMS message via the same WhatsApp Business API
+def send_sms_via_whatsapp_api(phone_number, message):
+    send_whatsapp_message(phone_number, message)
+
+# Main function to fetch staff and send messages
+def main():
+    try:
+        # Connect to SQLite database
+        conn = sqlite3.connect('atomart.db')  # 🟣 Ensure the database name is correct
+        cursor = conn.cursor()
+
+        # Fetch staff from the database
+        cursor.execute("SELECT name, phone_number FROM staff")
+        staff = cursor.fetchall()
+
+        # Iterate through staff and send messages
+        for name, phone_number in staff:
+            if is_whatsapp_number(phone_number):
+                # Send WhatsApp message
+                send_whatsapp_message(phone_number, "on a une reunion.")
+            else:
+                # Send SMS message via WhatsApp API
+                send_sms_via_whatsapp_api(phone_number, "on a une reunion.")
+
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error: {e}")
+    finally:
+        # Close cursor and database connection
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# Function to calculate the delay until the next scheduled time
+def get_delay_until_next_execution(hour, minute):
+    now = time.localtime()
+    scheduled_time = time.struct_time((now.tm_year, now.tm_mon, now.tm_mday, hour, minute, 0, now.tm_wday, now.tm_yday, now.tm_isdst))
+    scheduled_timestamp = time.mktime(scheduled_time)
+    current_timestamp = time.mktime(now)
+    delay = scheduled_timestamp - current_timestamp
+    if delay < 0:
+        delay += 86400  # Add 24 hours in seconds if the scheduled time is in the past (for the next day)
+    return delay
+
+# Schedule task to run main function every day at a specific time
+def schedule_task(hour, minute):
+    while True:
+        delay = get_delay_until_next_execution(hour, minute)
+        logging.info(f"Next execution in {delay} seconds.")
+        time.sleep(delay)
+        logging.info("Executing main task...")
+        main()
+        logging.info("Task completed. Waiting for next scheduled time...")
+
+if __name__ == "__main__":
+    # Set the desired time for daily execution
+    scheduled_hour = 14  # 🟣 Set the hour for the scheduled task
+    scheduled_minute = 20  # 🟣 Set the minute for the scheduled task
+    schedule_task(scheduled_hour, scheduled_minute)
